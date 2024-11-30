@@ -1,0 +1,839 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Solar System</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+        }
+        canvas {
+            display: block;
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+        }
+        #text {
+            position: fixed;
+            bottom: 80px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            z-index: 10;
+            color: white;
+            font-size: 36px;
+        }
+        #controls {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            z-index: 10;
+        }
+        #controls span {
+            display: inline-flex;
+            justify-content: center;
+            align-items: center;
+            width: 50px;
+            height: 50px;
+            font-size: 24px;
+            color: white;
+            background-color: rgba(0, 0, 0, 0.7);
+            border-radius: 50%;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+            cursor: pointer;
+            transition: all 0.3s ease;
+            user-select: none;
+        }
+        #controls span:hover {
+            background-color: rgba(255, 255, 255, 0.8);
+            color: black;
+            transform: scale(1.1);
+            box-shadow: 0 6px 12px rgba(0, 0, 0, 0.3);
+        }
+    </style>
+</head>
+<body>
+    <canvas id="webgl-canvas"></canvas>
+    <div id="text">
+        <span id="currentSphere"></span>
+    </div>
+    <div id="controls">
+        <span id="leftButton">&lt;</span>
+        <span id="rightButton">&gt;</span>
+    </div>
+
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/gl-matrix/2.4.0/gl-matrix.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.rawgit.com/mrdoob/three.js/r128/examples/js/loaders/GLTFLoader.js"></script>
+    <script src="https://cdn.rawgit.com/mrdoob/three.js/r128/examples/js/controls/OrbitControls.js"></script>
+    <script type="module">
+        // WebGL Canvas and Context
+        const canvas = document.getElementById('webgl-canvas');
+        const textCanvas = document.getElementById('text-overlay');
+        const gl = canvas.getContext('webgl');
+        const ctx = canvas.getContext('2d'); // 2D context for drawing text
+
+        // Set the canvas size
+        function setFullscreen() {
+            canvas.width = window.innerWidth;
+            canvas.height = window.innerHeight;
+            gl.viewport(0, 0, canvas.width, canvas.height);
+        }
+        window.addEventListener('resize', setFullscreen);
+        setFullscreen();
+
+        
+
+        // Celestial Bodies Data
+        const sphereNames = ['Sun', 'Mercury', 'Venus', 'Earth', 'Moon', 'Mars', 'Jupiter', 'Saturn', 'Uranus', 'Neptune'];
+        let currentSphereIndex = 3; // Start with Earth
+        
+        // Shader Programs
+        const vsSource = `
+            attribute vec4 aVertexPosition;
+            attribute vec3 aVertexNormal;
+            attribute vec2 aTextureCoord;
+            varying vec2 vTextureCoord;
+            varying vec3 vNormal;
+            varying vec3 vFragPosition;
+            uniform mat4 uModelViewMatrix;
+            uniform mat4 uProjectionMatrix;
+
+            void main(void) {
+                gl_Position = uProjectionMatrix * uModelViewMatrix * aVertexPosition;
+                vTextureCoord = aTextureCoord;
+                vFragPosition = (uModelViewMatrix * aVertexPosition).xyz;
+                vNormal = normalize(mat3(uModelViewMatrix) * aVertexNormal);
+            }
+        `;
+
+    const fsSource = `
+        precision mediump float;
+        varying vec2 vTextureCoord;
+        varying vec3 vNormal;
+        varying vec3 vFragPosition;
+        uniform sampler2D uSampler;
+        uniform vec3 uLightPosition;
+
+        void main(void) {
+            vec3 AmbientColour = vec3(0.3, 0.3, 0.3);
+            float AmbientIntensity = 0.5;
+
+            vec3 LightDirection = normalize(uLightPosition - vFragPosition);
+            float DiffuseLightIntensity = max(dot(vNormal, LightDirection), 0.0);
+            vec3 DiffuseColour = vec3(1.0, 1.0, 0.5);
+
+            vec3 ReflectDirection = reflect(-LightDirection, vNormal);
+            vec3 ViewDirection = normalize(-vFragPosition);
+            float SpecularIntensity = pow(max(dot(ReflectDirection, ViewDirection), 0.0), 64.0);
+            vec3 SpecularColour = vec3(1.0, 1.0, 1.0);
+
+            vec4 textureColor = texture2D(uSampler, vTextureCoord);
+            vec3 finalColor = AmbientColour * AmbientIntensity + DiffuseColour * DiffuseLightIntensity + SpecularColour * SpecularIntensity;
+            gl_FragColor = vec4(finalColor * textureColor.rgb, 1.0);
+        }
+    `;
+
+    const fsSource2 = `
+        precision mediump float;
+        varying vec2 vTextureCoord;
+        varying vec3 vNormal;
+        varying vec3 vFragPosition;
+        uniform sampler2D uSampler1;
+        uniform sampler2D uSampler2;
+        uniform vec3 uLightPosition;
+
+        void main(void) {
+            vec3 AmbientColour = vec3(0.3, 0.3, 0.3);
+            float AmbientIntensity = 0.5;
+
+            vec3 LightDirection = normalize(uLightPosition - vFragPosition);
+            float DiffuseLightIntensity = max(dot(vNormal, LightDirection), 0.0);
+            vec3 DiffuseColour = vec3(1.0, 1.0, 0.5);
+
+            vec3 ReflectDirection = reflect(-LightDirection, vNormal);
+            vec3 ViewDirection = normalize(-vFragPosition);
+            float SpecularIntensity = pow(max(dot(ReflectDirection, ViewDirection), 0.0), 64.0);
+            vec3 SpecularColour = vec3(1.0, 1.0, 1.0);
+
+            highp vec4 color1 = texture2D(uSampler1, vec2(vTextureCoord.st));
+            highp vec4 color2 = texture2D(uSampler2, vec2(vTextureCoord.st));
+            vec4 textureColor = mix(color1, color2, 0.5);
+
+            vec3 finalColor = AmbientColour * AmbientIntensity + DiffuseColour * DiffuseLightIntensity + SpecularColour * SpecularIntensity;
+            gl_FragColor = vec4(finalColor * textureColor.rgb, 1.0);
+        }
+    `;
+
+    const sunFsSource = `
+        precision mediump float;
+        varying vec2 vTextureCoord;
+        uniform sampler2D uSampler;
+
+        void main(void) {
+            vec3 uEmissiveColor = vec3(0.3, 0.3, 0.3);
+            vec4 textureColor = texture2D(uSampler, vTextureCoord);
+            
+            gl_FragColor = vec4(textureColor.rgb + uEmissiveColor, textureColor.a);
+        }
+    `;
+
+    // Initialize WebGL Shaders and Buffers
+    // (Add your WebGL initialization code here, such as creating spheres, shaders, etc.)
+    function initShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        if (gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            return shader;
+        }
+        console.error('Error compiling shader: ' + gl.getShaderInfoLog(shader));
+        gl.deleteShader(shader);
+    }
+
+    const vertexShader = initShader(gl, gl.VERTEX_SHADER, vsSource);
+    const fragmentShader = initShader(gl, gl.FRAGMENT_SHADER, fsSource);
+    const fragmentShader2 = initShader(gl, gl.FRAGMENT_SHADER, fsSource2);
+    const fragmentShader3 = initShader(gl, gl.FRAGMENT_SHADER, sunFsSource);
+
+    // Create a program and link shaders
+    const shaderProgram = gl.createProgram();
+    gl.attachShader(shaderProgram, vertexShader);
+    gl.attachShader(shaderProgram, fragmentShader);
+    gl.linkProgram(shaderProgram);
+    gl.useProgram(shaderProgram);
+    
+    const shaderProgram2 = gl.createProgram();
+    gl.attachShader(shaderProgram2, vertexShader);
+    gl.attachShader(shaderProgram2, fragmentShader2);
+    gl.linkProgram(shaderProgram2);
+
+    const shaderProgram3 = gl.createProgram();
+    gl.attachShader(shaderProgram3, vertexShader);
+    gl.attachShader(shaderProgram3, fragmentShader3);
+    gl.linkProgram(shaderProgram3);
+
+    // Create sphere geometry
+    function createSphere(latBands, lonBands) {
+        const vertices = [];
+        const normals = [];
+        const textureCoords = [];
+        const indices = [];
+
+        for (let lat = 0; lat <= latBands; lat++) {
+            const theta = lat * Math.PI / latBands;
+            const sinTheta = Math.sin(theta);
+            const cosTheta = Math.cos(theta);
+
+            for (let lon = 0; lon <= lonBands; lon++) {
+                const phi = lon * 2 * Math.PI / lonBands;
+                const sinPhi = Math.sin(phi);
+                const cosPhi = Math.cos(phi);
+
+                // Calculate vertex position
+                const x = cosPhi * sinTheta;
+                const y = cosTheta;
+                const z = sinPhi * sinTheta;
+
+                vertices.push(x, y, z);
+                normals.push(x, y, z);
+                textureCoords.push(lon / lonBands, lat / latBands);
+            }
+        }
+
+        for (let lat = 0; lat < latBands; lat++) {
+            for (let lon = 0; lon < lonBands; lon++) {
+                const first = (lat * (lonBands + 1)) + lon;
+                const second = first + lonBands + 1;
+                indices.push(first, second, first + 1);
+                indices.push(second, second + 1, first + 1);
+            }
+        }
+
+        return {
+            vertices: new Float32Array(vertices),
+            normals: new Float32Array(normals),
+            textureCoords: new Float32Array(textureCoords),
+            indices: new Uint16Array(indices)
+        };
+    }
+
+    // Create sphere mesh
+    var sphereData = null;
+    const vertexBuffer = gl.createBuffer();
+    const normalBuffer = gl.createBuffer();
+    const textureCoordBuffer = gl.createBuffer();
+    const indexBuffer = gl.createBuffer();
+
+    const positionLocation = gl.getAttribLocation(shaderProgram, 'aVertexPosition');
+    const normalLocation = gl.getAttribLocation(shaderProgram, 'aVertexNormal');
+    const textureCoordLocation = gl.getAttribLocation(shaderProgram, 'aTextureCoord');
+    const positionLocation2 = gl.getAttribLocation(shaderProgram2, 'aVertexPosition');
+    const normalLocation2 = gl.getAttribLocation(shaderProgram2, 'aVertexNormal');
+    const textureCoordLocation2 = gl.getAttribLocation(shaderProgram2, 'aTextureCoord');
+    const positionLocation3 = gl.getAttribLocation(shaderProgram3, 'aVertexPosition');
+    const textureCoordLocation3 = gl.getAttribLocation(shaderProgram3, 'aTextureCoord');
+
+    function createSphereMesh(gl, latBands, lonBands, texturePath, texturePath2 = null, isSun = false) {
+        sphereData = createSphere(latBands, lonBands);
+
+        // const vertexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, sphereData.vertices, gl.STATIC_DRAW);
+
+        // const normalBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, sphereData.normals, gl.STATIC_DRAW);
+
+        // const textureCoordBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, sphereData.textureCoords, gl.STATIC_DRAW);
+
+        // const indexBuffer = gl.createBuffer();
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, sphereData.indices, gl.STATIC_DRAW);
+
+        if (isSun) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.vertexAttribPointer(positionLocation3, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(positionLocation3);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer);
+            gl.vertexAttribPointer(textureCoordLocation3, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(textureCoordLocation3);
+
+            const samplerLocation = gl.getUniformLocation(shaderProgram3, 'uSampler');
+            const texture = gl.createTexture();
+            const image = new Image();
+            image.onload = function () {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                render(); // Call render when the texture is loaded
+            };
+            image.src = texturePath;
+            return { indexBuffer, indices: sphereData.indices, texture, samplerLocation, isSun };
+        } else if (texturePath2 == null) {
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(positionLocation);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.vertexAttribPointer(normalLocation, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(normalLocation);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer);
+            gl.vertexAttribPointer(textureCoordLocation, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(textureCoordLocation);
+
+            const samplerLocation = gl.getUniformLocation(shaderProgram, 'uSampler');
+            const texture = gl.createTexture();
+            const image = new Image();
+            image.onload = function () {
+                gl.bindTexture(gl.TEXTURE_2D, texture);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                render(); // Call render when the texture is loaded
+            };
+            image.src = texturePath;
+            return { indexBuffer, indices: sphereData.indices, texture, samplerLocation, isSun };
+        } else {
+            gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+            gl.vertexAttribPointer(positionLocation2, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(positionLocation2);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+            gl.vertexAttribPointer(normalLocation2, 3, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(normalLocation2);
+
+            gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer);
+            gl.vertexAttribPointer(textureCoordLocation2, 2, gl.FLOAT, false, 0, 0);
+            gl.enableVertexAttribArray(textureCoordLocation2);
+
+            const samplerLocation1 = gl.getUniformLocation(shaderProgram2, 'uSampler1');
+            const samplerLocation2 = gl.getUniformLocation(shaderProgram2, 'uSampler2');
+            const texture1 = gl.createTexture();
+            const image1 = new Image();
+            image1.onload = function () {
+                gl.bindTexture(gl.TEXTURE_2D, texture1);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image1);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                render(); // Call render when the texture is loaded
+            };
+            image1.src = texturePath;
+            const texture2 = gl.createTexture();
+            const image2 = new Image();
+            image2.onload = function () {
+                gl.bindTexture(gl.TEXTURE_2D, texture2);
+                gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image2);
+                gl.generateMipmap(gl.TEXTURE_2D);
+                render(); // Call render when the texture is loaded
+            };
+            image2.src = texturePath2;
+            return { indexBuffer, indices: sphereData.indices, texture1, samplerLocation1, texture2, samplerLocation2, isSun };
+        }
+    }
+
+    // Create ring geometry
+    function createRing(startRadius, endRadius, thetaSegs, phiSegs) {
+        const vertices = [];
+        const normals = [];
+        const textureCoords = [];
+        const indices = [];
+
+        const step = ((endRadius - startRadius) / phiSegs);
+        for (let j = 0; j <= phiSegs; j++) {
+            for (let i = 0; i <= thetaSegs; i++) {
+                const seg = i / thetaSegs * (Math.PI*2);
+
+                // Calculate vertex position
+                const x = startRadius * Math.cos(seg);
+                const y = 0;
+                const z = startRadius * Math.sin(seg);
+
+                vertices.push(x, y, z);
+                normals.push(x, y, z);
+                textureCoords.push(j / phiSegs, i / thetaSegs);
+            }
+            startRadius += step;
+        }
+
+        for (let j = 0; j < phiSegs; j++) {
+            for (let i = 0; i < thetaSegs; i++) {
+                const first = (j * (thetaSegs + 1)) + i;
+                const second = first + thetaSegs + 1;
+                indices.push(first, second, first + 1);
+                indices.push(second, second + 1, first + 1);
+            }
+        }
+
+        return {
+            vertices: new Float32Array(vertices),
+            normals: new Float32Array(normals),
+            textureCoords: new Float32Array(textureCoords),
+            indices: new Uint16Array(indices)
+        };
+    }
+
+    // Create ring mesh
+    var ringData = null;
+    const vertexBuffer2 = gl.createBuffer();
+    const normalBuffer2 = gl.createBuffer();
+    const textureCoordBuffer2 = gl.createBuffer();
+    const indexBuffer2 = gl.createBuffer();
+
+    function createRingMesh(gl, startRadius, endRadius, thetaSegs, phiSegs, texturePath) {
+        ringData = createRing(startRadius, endRadius, thetaSegs, phiSegs);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer2);
+        gl.bufferData(gl.ARRAY_BUFFER, ringData.vertices, gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer2);
+        gl.bufferData(gl.ARRAY_BUFFER, ringData.normals, gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer2);
+        gl.bufferData(gl.ARRAY_BUFFER, ringData.textureCoords, gl.STATIC_DRAW);
+
+        gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer2);
+        gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, ringData.indices, gl.STATIC_DRAW);
+
+        const samplerLocation = gl.getUniformLocation(shaderProgram, 'uSampler');
+        const texture = gl.createTexture();
+        const image = new Image();
+        image.onload = function () {
+            gl.bindTexture(gl.TEXTURE_2D, texture);
+            gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, image);
+            if (isPowOf2(image.width) && isPowOf2(image.height)) {
+                // Is power of 2
+                gl.generateMipmap(gl.TEXTURE_2D);
+            } else {
+                // Not power of 2
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+                gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+            }
+            render(); // Call render when the texture is loaded
+        };
+        image.src = texturePath;
+
+        return { indexBuffer2, indices: ringData.indices, texture, samplerLocation };
+    }
+
+    function isPowOf2(value) {
+        return (value & (value - 1)) == 0;
+    }
+
+    // Create multiple spheres with unique textures and movement
+    const spheres = [
+        createSphereMesh(gl, 30, 30, 'texture/sun.jpg', null, true), // Sun
+        createSphereMesh(gl, 30, 30, 'texture/mercury.jpg'), // mercury
+        createSphereMesh(gl, 30, 30, 'texture/venus.jpg'), // Venus
+        createSphereMesh(gl, 30, 30, 'texture/ColorMap.jpg', 'texture/Clouds.png'), // Earth
+        createSphereMesh(gl, 30, 30, 'texture/moon.jpg'), // Moon
+        createSphereMesh(gl, 30, 30, 'texture/mars.jpg'), // mars
+        createSphereMesh(gl, 30, 30, 'texture/jupiter.jpg'), // jupiter
+        createSphereMesh(gl, 30, 30, 'texture/saturn.jpg'), // saturn
+        createSphereMesh(gl, 30, 30, 'texture/uranus.jpg'), // uranus
+        createSphereMesh(gl, 30, 30, 'texture/neptune.jpg'), // neptune
+        createSphereMesh(gl, 30, 30, 'texture/8k_stars.jpg'), // starry sky
+    ];
+    const rings = [
+        createRingMesh(gl, 1.5, 2, 64, 1, 'texture/2k_saturn_ring_alpha.png'), // Saturn Ring
+    ];
+    const Period = 0.001;
+    // Define transformations for each sphere
+    const sphereTransforms = [
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: null, radius: 0, scale: [69.6340,69.6340,69.6340], rotation: 0, rotation_speed: Period/26, direction: [0, 0, 0], spinTime: 1 }, // Sun
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+5791/*5791*/, scale: [0.244, 0.244, 0.244]/*0.244*/, rotation: 0, rotation_speed: Period/58, direction: [1, 0, 1], spinTime: 88 }, 
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+10820/*10820*/, scale: [0.6051,0.6051,0.6051]/*0.6051*/, rotation: 0, rotation_speed: Period/243, direction: [1, 0, 1], spinTime: 225 },
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+14960/*14960*/, scale: [0.673,0.673,0.673]/*0.673*/, rotation: 0, rotation_speed: Period, direction: [1, 0, 1], spinTime: 365.25 }, 
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 3, radius: 6.73+0.384, scale: [0.173, 0.173, 0.173], rotation: 0, rotation_speed: -(Period/27.3), direction: [-1, 0, 1], spinTime: 27 }, // moon
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+22790/*22790*/, scale: [0.3396,0.3396,0.3396]/*0.3396*/, rotation: 0, rotation_speed: Period/(24.6/24), direction: [1, 0, 1], spinTime: 687 }, 
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+77850/*77850*/, scale: [6.9911,6.9911,6.9911]/*6.9911	*/, rotation: 0, rotation_speed: Period/(9.9/24), direction: [1, 0, 1], spinTime: 4346.38217 },
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+14300/*143000*/, scale: [5.8232,5.8232,5.8232]/*5.8232*/, rotation: 0, rotation_speed: Period/(10.7/24), direction: [1, 0, 1], spinTime: 10774.6449 }, 
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+287000/*287000*/, scale: [2.5362,2.5362,2.5362]/*2.5362*/, rotation: 0, rotation_speed: Period/(17.2/24), direction: [1, 0, 1], spinTime: 30680.3447 }, 
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 0, radius: 69.6340+45000/*450000*/, scale: [2.4622,2.4622,2.4622]/*2.4622*/, rotation: 0, rotation_speed: Period/(16.1/24), direction: [1, 0, 1], spinTime: 60264.9628 },
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: null, radius: 0, scale: [150000,150000,150000], rotation: 0, rotation_speed: Period/100, direction: [0, 0, 0], spinTime: 1},
+    ];
+    const ringTransforms = [
+        { position: [0, 0, 0], oriPos: [0,0,0], aroundPlanet: 7, radius: 0, scale: [5.8232,5.8232,5.8232], rotation: 0, rotation_speed: Period/26, direction: [0, 0, 0], spinTime: 10774.6449 }, // Saturn Ring
+    ];
+
+    const uProjectionMatrix = gl.getUniformLocation(shaderProgram, 'uProjectionMatrix');
+    const uModelViewMatrix = gl.getUniformLocation(shaderProgram, 'uModelViewMatrix');
+    const uProjectionMatrix2 = gl.getUniformLocation(shaderProgram2, 'uProjectionMatrix');
+    const uModelViewMatrix2 = gl.getUniformLocation(shaderProgram2, 'uModelViewMatrix');
+    const uProjectionMatrix3 = gl.getUniformLocation(shaderProgram3, 'uProjectionMatrix');
+    const uModelViewMatrix3 = gl.getUniformLocation(shaderProgram3, 'uModelViewMatrix');
+    const uLightPosition = gl.getUniformLocation(shaderProgram, 'uLightPosition');
+    const uLightPosition2 = gl.getUniformLocation(shaderProgram2, 'uLightPosition');
+
+        let cameraAngle = 0; // Angle in radians
+        const cameraDistance = 10; // Distance of the camera from celestial bodies
+        const cameraPosition = [0,0,2000];
+
+        // Listen for keydown events to rotate the camera
+        document.addEventListener('keydown', (event) => {
+            if (event.key === 'a' || event.key === 'A') {
+                // Rotate camera counterclockwise
+                cameraAngle -= 0.05; // Adjust rotation speed as needed
+            } else if (event.key === 'd' || event.key === 'D') {
+                // Rotate camera clockwise
+                cameraAngle += 0.05; // Adjust rotation speed as needed
+            }
+        });
+        
+        // Update the camera position based on the selected sphere
+        function updateCameraPosition() {
+            const targetTransform = sphereTransforms[currentSphereIndex];
+            cameraPosition[0] = targetTransform.position[0] + cameraDistance * Math.sin(cameraAngle);
+            cameraPosition[1] = targetTransform.position[1] + targetTransform.scale[0] * 1; // Slightly above the sphere
+            cameraPosition[2] = targetTransform.position[2] + cameraDistance * Math.cos(cameraAngle) + targetTransform.scale[0] * 3;
+            return cameraPosition;
+        }
+        
+        let t = 0;
+        // Render Function
+        function render() {
+            const cameraPosition = updateCameraPosition();
+
+            gl.clearColor(0.0, 0.0, 0.0, 1.0);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+            gl.enable(gl.DEPTH_TEST);
+
+            const projectionMatrix = mat4.create();
+            mat4.perspective(
+                projectionMatrix,
+                Math.PI / 4, // Field of view (45 degrees)
+                gl.canvas.clientWidth / gl.canvas.clientHeight, // Aspect ratio
+                0.1, // Near clipping plane
+                10000000 // Far clipping plane
+            );
+
+            const lightPosition = sphereTransforms[1].position;
+
+            spheres.forEach((sphere, index) => {
+                const modelViewMatrix = mat4.create();
+                const transform = sphereTransforms[index];
+
+                const targetTransform = sphereTransforms[currentSphereIndex];
+                mat4.lookAt(modelViewMatrix, cameraPosition, targetTransform.position, [0, 1, 0]); // Up vector is [0, 1, 0]
+
+                mat4.translate(modelViewMatrix, modelViewMatrix, transform.position);
+                mat4.scale(modelViewMatrix, modelViewMatrix, transform.scale);
+                mat4.rotateY(modelViewMatrix, modelViewMatrix, transform.rotation);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
+                gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(positionLocation);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer);
+                gl.vertexAttribPointer(textureCoordLocation, 2, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(textureCoordLocation);
+
+                if (sphere.isSun) {
+                    // Use Shader Program 3 (Sun)
+                    gl.useProgram(shaderProgram3);
+                    gl.uniformMatrix4fv(uProjectionMatrix3, false, projectionMatrix);
+                    gl.uniformMatrix4fv(uModelViewMatrix3, false, modelViewMatrix);
+
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, sphere.texture);
+                    gl.uniform1i(sphere.samplerLocation, 0);
+                } else if (sphere.texture == null) {
+                    // Use Shader Program 2 (e.g., multitextured sphere)
+                    gl.useProgram(shaderProgram2);
+
+                    gl.uniform3fv(uLightPosition2, lightPosition);
+
+                    gl.uniformMatrix4fv(uProjectionMatrix2, false, projectionMatrix);
+                    gl.uniformMatrix4fv(uModelViewMatrix2, false, modelViewMatrix);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+                    gl.vertexAttribPointer(normalLocation2, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(normalLocation2);
+                    
+                    // Bind multitextures
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, sphere.texture1);
+                    gl.uniform1i(sphere.samplerLocation1, 0);
+
+                    gl.activeTexture(gl.TEXTURE1);
+                    gl.bindTexture(gl.TEXTURE_2D, sphere.texture2);
+                    gl.uniform1i(sphere.samplerLocation2, 1);
+                } else {
+                    // Use Shader Program 1 (e.g., single-textured sphere)
+                    gl.useProgram(shaderProgram);
+
+                    gl.uniform3fv(uLightPosition, lightPosition);
+
+                    gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+                    gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
+
+                    gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer);
+                    gl.vertexAttribPointer(normalLocation, 3, gl.FLOAT, false, 0, 0);
+                    gl.enableVertexAttribArray(normalLocation);
+
+                    // Bind single texture
+                    gl.activeTexture(gl.TEXTURE0);
+                    gl.bindTexture(gl.TEXTURE_2D, sphere.texture);
+                    gl.uniform1i(sphere.samplerLocation, 0);
+                }
+
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, sphere.indexBuffer);
+                gl.drawElements(gl.TRIANGLES, sphere.indices.length, gl.UNSIGNED_SHORT, 0);
+
+                transform.rotation += transform.rotation_speed; // Rotate the sphere
+
+                // Handle orbital movement around another body (if applicable)
+                if (transform.aroundPlanet != null) {
+                    const parentTransform = sphereTransforms[transform.aroundPlanet]; // Parent body
+                    transform.oriPos[0] = parentTransform.position[0];
+                    transform.oriPos[1] = parentTransform.position[1];
+                    transform.oriPos[2] = parentTransform.position[2];
+                }
+
+                // Update position based on orbital parameters
+                transform.position[0] = transform.oriPos[0] + transform.radius * transform.direction[0] * Math.sin((t * Math.PI) / 360 / transform.spinTime);
+                transform.position[1] = transform.oriPos[1]; // Keep Y unchanged (for simplicity)
+                transform.position[2] = transform.oriPos[2] + transform.radius * transform.direction[2] * Math.cos((t * Math.PI) / 360 / transform.spinTime);
+            });
+            
+            // Loop through all rings and render them
+            rings.forEach((ring, index) => {
+                const modelViewMatrix = mat4.create(); // Create a fresh model-view matrix
+                const transform = ringTransforms[index]; // Get the transform for this ring
+
+                // Make the camera look at the currently selected sphere
+                const targetTransform = sphereTransforms[currentSphereIndex];
+                mat4.lookAt(modelViewMatrix, cameraPosition, targetTransform.position, [0, 1, 0]); // Up vector is [0, 1, 0]
+
+                // Apply transformations for the ring (position, scale, rotation)
+                mat4.translate(modelViewMatrix, modelViewMatrix, transform.position); // Move the ring to its position
+                mat4.scale(modelViewMatrix, modelViewMatrix, transform.scale); // Scale the ring
+                mat4.rotateY(modelViewMatrix, modelViewMatrix, transform.rotation); // Apply rotation
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer2);
+                gl.vertexAttribPointer(positionLocation, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(positionLocation);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, normalBuffer2);
+                gl.vertexAttribPointer(normalLocation, 3, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(normalLocation);
+
+                gl.bindBuffer(gl.ARRAY_BUFFER, textureCoordBuffer2);
+                gl.vertexAttribPointer(textureCoordLocation, 2, gl.FLOAT, false, 0, 0);
+                gl.enableVertexAttribArray(textureCoordLocation);
+
+                // Choose the appropriate shader program for rendering this ring
+                // Use Shader Program 1 (e.g., single-textured ring)
+                gl.useProgram(shaderProgram);
+
+                gl.uniform3fv(uLightPosition, lightPosition);
+                
+                gl.uniformMatrix4fv(uProjectionMatrix, false, projectionMatrix);
+                gl.uniformMatrix4fv(uModelViewMatrix, false, modelViewMatrix);
+
+                // Bind single texture
+                gl.activeTexture(gl.TEXTURE0);
+                gl.bindTexture(gl.TEXTURE_2D, ring.texture);
+                gl.uniform1i(ring.samplerLocation, 0);
+
+                // Bind the ring's index buffer and draw it
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, ring.indexBuffer2);
+                gl.drawElements(gl.TRIANGLES, ring.indices.length, gl.UNSIGNED_SHORT, 0);
+
+                //Update the ring's rotation and orbital movement
+                transform.rotation += transform.rotation_speed; // Rotate the ring
+
+                // Handle orbital movement around another body (if applicable)
+                if (transform.aroundPlanet != null) {
+                    const parentTransform = sphereTransforms[transform.aroundPlanet]; // Parent body
+                    transform.oriPos[0] = parentTransform.position[0];
+                    transform.oriPos[1] = parentTransform.position[1];
+                    transform.oriPos[2] = parentTransform.position[2];
+                }
+
+                // Update position based on orbital parameters
+                transform.position[0] = transform.oriPos[0] + transform.radius * transform.direction[0] * Math.sin((t * Math.PI) / 360 / transform.spinTime);
+                transform.position[1] = transform.oriPos[1]; // Keep Y unchanged (for simplicity)
+                transform.position[2] = transform.oriPos[2] + transform.radius * transform.direction[2] * Math.cos((t * Math.PI) / 360 / transform.spinTime);
+            });
+
+            t = (t + 1);
+
+            requestAnimationFrame(render);
+        }
+        
+        function updateCurrentSphereText() {
+            const textElement = document.getElementById('currentSphere');
+            textElement.textContent = `${sphereNames[currentSphereIndex]}`;
+        }
+
+        // Update the text initially
+        updateCurrentSphereText();
+        
+        // Event listeners for navigation buttons
+        document.getElementById('leftButton').addEventListener('click', () => {
+            if (currentSphereIndex > 0) {
+                currentSphereIndex--;
+                updateCurrentSphereText();
+            } else {
+                currentSphereIndex = sphereNames.length - 1; // Loop to last sphere
+                updateCurrentSphereText();
+            }
+        });
+
+        document.getElementById('rightButton').addEventListener('click', () => {
+            if (currentSphereIndex < sphereNames.length - 1) {
+                currentSphereIndex++;
+                updateCurrentSphereText();
+            } else {
+                currentSphereIndex = 0; // Loop to first sphere
+                updateCurrentSphereText();
+            }
+        });
+
+        // Initialize and start rendering
+        render();
+
+        let scene, threeCamera, threeRenderer, orbit, model;
+
+        function init() {
+            // Create scene
+            scene = new THREE.Scene();
+
+            // Create camera
+            threeCamera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            threeCamera.position.set(0, 1, 5);
+
+            // Create renderer
+            threeRenderer = new THREE.WebGLRenderer({ 
+                antialias: true,
+                alpha: true
+            });
+            threeRenderer.setSize(window.innerWidth, window.innerHeight);
+            document.body.appendChild(threeRenderer.domElement);
+
+            // Add ambient light with increased intensity
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.8); // Increased intensity
+            scene.add(ambientLight);
+
+            // Add directional light
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 1);
+            directionalLight.position.set(0, 1, 0);
+            directionalLight.target.position.set(0, 0, 0);
+            directionalLight.castShadow = true;
+            scene.add(directionalLight);
+            scene.add(directionalLight.target);
+
+            // Load GLTF model
+            const loader = new THREE.GLTFLoader();
+            loader.load('ufo_flying_saucer_spaceship_ovni/scene.gltf', function (gltf) {
+                model = gltf.scene;
+                model.scale.set(0.2, 0.2, 0.2); // Scale the model
+                scene.add(model);
+                animate();
+            }, undefined, function (error) {
+                console.error(error);
+            });
+
+            // Initialize OrbitControls
+            orbit = new THREE.OrbitControls(threeCamera, threeRenderer.domElement);
+            orbit.maxPolarAngle = Math.PI / 2;
+            orbit.update();
+
+            // Handle window resize
+            window.addEventListener('resize', onWindowResize, false);
+
+            // Handle mouse movement
+            window.addEventListener('mousemove', onMouseMove, false);
+        }
+
+        function onMouseMove(event) {
+            // Normalize mouse coordinates to [-1, 1]
+            const mouseX = (event.clientX / window.innerWidth) * 2 - 1;
+            const mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+
+            // Update model position based on mouse coordinates
+            if (model) {
+                model.position.x = mouseX * 10; // Scale position for visibility
+                model.position.y = mouseY * 5; // Scale position for visibility
+            }
+        }
+
+        function updateLightPosition() {
+            const targetTransform = sphereTransforms[0]; // Sun as the target
+            directionalLight.position.copy(targetTransform.position); // Light follows sun position
+            directionalLight.target.position.copy(targetTransform.position); // Light targets the sun
+            directionalLight.target.updateMatrixWorld(); // Update target matrix for shadows
+        }
+        let rotationSpeed = 0.05;
+        function animate() {
+            requestAnimationFrame(animate);
+            orbit.update();
+            //updateLightPosition();
+            threeRenderer.render(scene, threeCamera);
+            model.rotation.y += rotationSpeed;
+        }
+
+        function onWindowResize() {
+            threeCamera.aspect = window.innerWidth / window.innerHeight;
+            threeCamera.updateProjectionMatrix();
+            threeRenderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        init();
+    </script>
+</body>
+</html>
