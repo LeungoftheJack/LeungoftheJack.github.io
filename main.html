@@ -146,6 +146,7 @@
             attribute vec4 aVertexPosition;
             attribute vec3 aVertexNormal;
             attribute vec2 aTextureCoord;
+            attribute vec2 aTextureCoord2;
             varying vec2 vTextureCoord;
             varying vec3 vNormal;
             varying vec3 vFragPosition;
@@ -190,11 +191,13 @@
     const fsSource2 = `
         precision mediump float;
         varying vec2 vTextureCoord;
+        varying vec2 vTextureCoord2;
         varying vec3 vNormal;
         varying vec3 vFragPosition;
         uniform sampler2D uSampler1;
         uniform sampler2D uSampler2;
         uniform vec3 uLightPosition;
+        uniform float uTime;
 
         void main(void) {
             vec3 AmbientColour = vec3(0.3, 0.3, 0.3);
@@ -209,8 +212,9 @@
             float SpecularIntensity = pow(max(dot(ReflectDirection, ViewDirection), 0.0), 64.0);
             vec3 SpecularColour = vec3(1.0, 1.0, 1.0);
 
+            vec2 vTextureCoord2 = vec2((vTextureCoord.s + uTime), vTextureCoord.t);
             highp vec4 color1 = texture2D(uSampler1, vec2(vTextureCoord.st));
-            highp vec4 color2 = texture2D(uSampler2, vec2(vTextureCoord.st));
+            highp vec4 color2 = texture2D(uSampler2, vec2(vTextureCoord2.st));
             vec4 textureColor = mix(color1, color2, 0.5);
 
             vec3 finalColor = AmbientColour * AmbientIntensity + DiffuseColour * DiffuseLightIntensity + SpecularColour * SpecularIntensity;
@@ -403,6 +407,7 @@
             gl.vertexAttribPointer(textureCoordLocation2, 2, gl.FLOAT, false, 0, 0);
             gl.enableVertexAttribArray(textureCoordLocation2);
 
+            const uTimeLocation = gl.getUniformLocation(shaderProgram2, 'uTime');
             const samplerLocation1 = gl.getUniformLocation(shaderProgram2, 'uSampler1');
             const samplerLocation2 = gl.getUniformLocation(shaderProgram2, 'uSampler2');
             const texture1 = gl.createTexture();
@@ -423,7 +428,7 @@
                 render(); // Call render when the texture is loaded
             };
             image2.src = texturePath2;
-            return { indexBuffer, indices: sphereData.indices, texture1, samplerLocation1, texture2, samplerLocation2, isSun };
+            return { indexBuffer, indices: sphereData.indices, texture1, samplerLocation1, texture2, samplerLocation2, isSun, uTimeLocation };
         }
     }
 
@@ -654,6 +659,9 @@
                     gl.activeTexture(gl.TEXTURE1);
                     gl.bindTexture(gl.TEXTURE_2D, sphere.texture2);
                     gl.uniform1i(sphere.samplerLocation2, 1);
+                    
+                    gl.uniform1f(sphere.uTimeLocation, (t*0.0001)%1);
+
                 } else {
                     // Use Shader Program 1 (e.g., single-textured sphere)
                     gl.useProgram(shaderProgram);
